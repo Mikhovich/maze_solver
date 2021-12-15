@@ -2,14 +2,21 @@
 #include "sensor_msgs/LaserScan.h"
 #include "nav_msgs/OccupancyGrid.h"
 #include "nav_msgs/MapMetaData.h"
+#include "nav_msgs/Odometry.h"
 #include "geometry_msgs/Twist.h"
-
+#include <math.h>
 #include <fstream>
 
+int restricting_radius = 4;
 double TOUCH_THRESHHOLD = 0.6, THRESHHOLD = 0.4;
 
 double g_right_distance, g_front_distance, g_left_distance;
 geometry_msgs::Twist g_robot_velocity;
+nav_msgs::OccupancyGrid msg;
+
+bool start_pose_set = false;
+geometry_msgs::Pose start_pose, current_pose;
+
 
 int findAnyWall();
 int turnLeft();
@@ -19,6 +26,8 @@ int followWall();
 void goForward();
 void goRight();
 void goLeft();
+
+void check_radius_restriction();
 
 void rightIrCallback(const sensor_msgs::LaserScan::ConstPtr &msg)
 {
@@ -40,12 +49,20 @@ void leftIrCallback(const sensor_msgs::LaserScan::ConstPtr &msg)
     ROS_INFO("g_left_distance %f", g_left_distance);
 }
 
-nav_msgs::OccupancyGrid msg;
-
 void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr &mesg)
 {
     msg.info = mesg->info;
     msg.data = mesg->data;
+}
+
+void basePoseCallback(const nav_msgs::Odometry::ConstPtr &msg)
+{
+    if (!start_pose_set)
+    {
+        start_pose.position = msg->pose.pose.position;
+        start_pose_set = true;
+    }
+    current_pose.position = msg->pose.pose.position;
 }
 
 void saveMap()
@@ -87,12 +104,14 @@ int main(int argc, char **argv)
     ros::Subscriber left_ir_sub = n.subscribe("base_scan_2", 10, leftIrCallback);
 
     ros::Subscriber map_sub = n.subscribe("map", 10, mapCallback);
+    ros::Subscriber pose_sub = n.subscribe("base_pose_ground_truth", 10, basePoseCallback);
 
     int state = 0;
 
     while (ros::ok())
     {
         ros::spinOnce();
+        check_radius_restriction();
 
         switch (state)
         { // right wall following algorithm
@@ -200,4 +219,16 @@ int followWall() //3
         return findLostRightWall();
     if (g_right_distance < THRESHHOLD || g_front_distance < TOUCH_THRESHHOLD)
         return turnLeft();
+}
+
+void check_radius_restriction()
+{
+    double dist_x = pow(start_pose.position.x - current_pose.position.x, 2);
+    double dist_y = pow(start_pose.position.y - current_pose.position.y, 2);
+    double dist_from_start = sqrt(dist_x + dist_y);
+    ROS_INFO("____distance from start %f", dist_from_start);
+    if(dist_from_start > restricting_radius)
+    {
+        g_front_distance = 0;
+    }
 }
